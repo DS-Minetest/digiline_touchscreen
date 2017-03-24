@@ -1,125 +1,89 @@
 local load_time_start = os.clock()
 
--- 512x512 px
 
---http://snipplr.com/view/13086/number-to-hex/
---- Returns HEX representation of num
-function num2hex(num)
-    local hexstr = '0123456789abcdef'
-    local s = ''
-    while num > 0 do
-        local mod = math.fmod(num, 16)
-        s = string.sub(hexstr, mod+1, mod+1) .. s
-        num = math.floor(num / 16)
-    end
-    if s == '' then s = '0' end
-    return s
-end
+local function pointed_thing_to_face_pos(placer, pointed_thing)
+	local eye_offset_first = placer:get_eye_offset()
 
-local black = {r=0, g=0, b=0}
+	local node_pos = pointed_thing.under
+	local player_pos = placer:get_pos()
+	local pos_off = vector.multiply(vector.subtract(pointed_thing.above, pointed_thing.under), -0.437)
+	local look_dir = placer:get_look_dir()
 
-local function getcolour(colstr)
-	if not colstr then
-		return black
-	end
-end
-
--- converts a rgb table to a hex colour string
-local function rgbstring(rgb)
-	local t = ""
-	for _,f in ipairs({"r", "g", "b"}) do
-		f = rgb[f]
-		f = math.floor(f+0.5)
-		f = math.max(0, math.min(255, f))
-		f = num2hex(f)
-		if #f == 1 then
-			f = "0"..f
+	local offset, nc
+	local oc = {}
+	for c, v in pairs(pos_off) do
+		if v == 0 then
+			oc[#oc + 1] = c
+		else
+			offset = v
+			nc = c
 		end
-		t = t..f
 	end
-	return t --"#"..t
+
+	local fine_pos = {[nc] = node_pos[nc] + offset}
+
+	player_pos.y = player_pos.y + 1.625 + eye_offset_first.y / 10
+
+	local f = (node_pos[nc] + offset - player_pos[nc]) / look_dir[nc]
+	for i = 1, #oc do
+		fine_pos[oc[i]] = player_pos[oc[i]] + look_dir[oc[i]] * f
+	end
+
+	return fine_pos
 end
 
--- makes a table with the colours as indices from a coord table
-local function index_colours(data)
-	local coltab = {}
-	for y = 1,512 do
-		local line = data[y]
-		if line then
-			for x = 1,512 do
-				local col = line[x]
-				if col then
-					col = rgbstring(col)
-					coltab[col] = coltab[col] or {}
-					table.insert(coltab[col], {x,y})
-				end
+local entposs = {
+	[2] = {delta = {x =  0.437, y = 0, z = 0}, yaw = math.pi * 1.5},
+	[3] = {delta = {x = -0.437, y = 0, z = 0}, yaw = math.pi * 0.5},
+	[4] = {delta = {x = 0, y = 0, z =  0.437}, yaw = 0},
+	[5] = {delta = {x = 0, y = 0, z = -0.437}, yaw = math.pi},
+}
+
+local box = {
+	type = "wallmounted",
+	wall_top = {-8/16, 7/16, -8/16, 8/16, 8/16, 8/16}
+}
+
+digiline_screens.register_screen("digiline_touchscreen:touchscreen", {
+		description = "digiline controlled touchscreen",
+		drawtype = "nodebox",
+		inventory_image = "digiline_touchscreen.png",
+		wield_image = "digiline_touchscreen.png",
+		tiles = {"digiline_touchscreen.png"},
+		paramtype = "light",
+		sunlight_propagates = true,
+		paramtype2 = "wallmounted",
+		node_box = box,
+		selection_box = box,
+		groups = {choppy = 3, dig_immediate = 2},
+		light_source = 6,
+
+		digiline = {receptor = {},},
+
+		after_place_node = function (pos, placer, itemstack)
+			local param2 = minetest.get_node(pos).param2
+			if param2 == 0 or param2 == 1 then
+				minetest.add_node(pos, {name = "digiline_screens:screen", param2 = 3})
 			end
-		end
-	end
-	return coltab
-end
+		end,
 
--- returns the texture with its modifiers for the screen
-local function make_texture(data)
-	-- set the base image
-	local tex,n = {"digiline_touchscreen_bg.png"},2
-
-	-- add the px and "colorize" them
-	for col,ps in pairs(index_colours(data)) do
-		-- add a chunk of px
-		tex[n] = "^([combine:WxH"
-		n = n+1
-		for _,coord in pairs(ps) do
-			local x,y = unpack(coord)
-			tex[n] = ":"..x..","..y.."=digiline_touchscreen_px.png"
-			n = n+1
-		end
-
-		-- colorize them
-		tex[n] = "^[colorize:#"..col..")"
-		n = n+1
-	end
-
-	-- return a string
-	return table.concat(tex, "")
-end
-
--- the node the object should be attached to
-minetest.register_node("digiline_touchscreen:touchscreen", {
-	description = "digiline controlled touchscreen",
-	drawtype = "nodebox",
-	tiles = {"digiline_touchscreen.png"},
-	paramtype = "light",
-	--paramtype2 = "facedir",
-	groups = {cracky=3, oddly_breakable_by_hand=2},
-	sounds = default.node_sound_stone_defaults(),
-	node_box = {
-		type = "fixed",
-		fixed = {
-			{-0.5, -0.5, -0.5, 0.5, -7/16, 0.5},
-		},
+		on_punch = function(pos, node, puncher, pointed_thing)
+			local diff = vector.subtract(pointed_thing.above, pointed_thing.under)
+			local frontside = vector.round(vector.multiply(entposs[node.param2].delta, -2))
+			if diff.y ~= 0 or diff.x ~= frontside.x or diff.z ~= frontside.z then
+				return
+			end
+			local meta = minetest.get_meta(pos)
+			local channel = meta:get_string("channel")
+			local fine_pointed = pointed_thing_to_face_pos(puncher, pointed_thing)
+			digilines.receptor_send(pos, digiline.rules.default, channel, fine_pointed)
+		end,
 	},
-	on_construct = function(pos)
-	end,
-	on_destruct = function(pos)
-	end,
-})
 
--- the screen
-minetest.register_entity("digiline_touchscreen:entity", {
-	collisionbox = {0,0,0, 0,0,0},
-	physical=false,
-	visual = "upright_sprite",
-	textures = {"digiline_touchscreen_bg.png"},
-	on_activate = function(self, staticdata)
-		local pos = vector.round(self.object:getpos())
-		local meta = minetest.get_meta(pos)
-		local data = meta:get_string("data")
-		data = data_to_tab(data)
-		local pic = make_texture(data)
-		self.object:set_properties({textures={pic}})
-	end,
-})
+	16,
+	16,
+	entposs
+)
 
 
 local time = math.floor(tonumber(os.clock()-load_time_start)*100+0.5)/100
