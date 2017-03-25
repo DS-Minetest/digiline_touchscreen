@@ -84,7 +84,17 @@ digiline_screens.register_screen("digiline_touchscreen:touchscreen", {
 			local meta = minetest.get_meta(pos)
 			local channel = meta:get_string("channel")
 			local fine_pointed = pointed_thing_to_face_pos(puncher, pointed_thing)
-			digilines.receptor_send(pos, digiline.rules.default, channel, fine_pointed)
+			local msg = vector.subtract(fine_pointed, pos) -- relative pos
+			if entposs[node.param2].delta.x ~= 0 then
+				msg.x = msg.z
+			end
+			msg.z = nil
+			-- make pos from up left to down right
+			msg.y = -msg.y
+			if node.param2 == 5 or node.param2 == 2 then
+				msg.x = -msg.x
+			end
+			digilines.receptor_send(pos, digiline.rules.default, channel, msg)
 		end,
 	},
 
